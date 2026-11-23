@@ -1,0 +1,78 @@
+{
+ "Uuid": "09ed26ee-a89e-4684-afcc-ae5cd70f1253",
+ "IsCustomNode": false,
+ "Description": "PDF 평면도 → 계단 + 실(Room) 자동 생성",
+ "Name": "03_계단_실생성",
+ "ElementResolver": {
+  "ResolutionMap": {}
+ },
+ "Inputs": [],
+ "Outputs": [],
+ "Nodes": [
+  {
+   "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+   "Code": "# -*- coding: utf-8 -*-\n# [Revit 3] 계단(StairsEditScope) + 난간 + 실(Room) 생성\n# - 계단 : 1층 22단(디딤판 270mm), 2~6층 20단(300mm), 계단참 자동 생성\n# - 실   : PDF 글자 위치에 NewRoom + 실 이름 입력\n# - 재실행 : 주석 = 'PDF자동생성_계단실' 요소만 교체\n# 실행 : Dynamo > Python Script 노드(엔진 PythonNet3)에 붙여 넣거나 같은 이름의 .dyn 을 열어 실행\n#\n# PDF 평면도 → Revit 계단 + 실(Room) 자동 생성\n# 벽·바닥·창·문·커튼월은 건드리지 않습니다. 다시 실행하면 이 스크립트가 만든 계단·실만 지우고 새로 만듭니다.\nimport clr, json, math\nclr.AddReference('RevitAPI')\nfrom Autodesk.Revit.DB import *\nfrom Autodesk.Revit.DB.Architecture import *\nclr.AddReference('RevitServices')\nfrom RevitServices.Persistence import DocumentManager\nfrom RevitServices.Transactions import TransactionManager\n\n# ───────── 설정 ─────────\nRUN_STAIRS = True\nRUN_ROOMS = True\nFLOOR_LEVEL = {'1': '1F', '2': '2F', '3': '3F', '4': '4F', '5': '5F', '6': '6F', '7': '옥상'}\nSTAIR_FLOORS = ['1', '2', '3', '4', '5', '6']      # 이 층에서 위층으로 올라가는 계단\nMAX_RISER_MM = 180.0\nRUN_GAP_MM = 50.0              # 두 계단 사이 칸막이 여유\nADD_RAILINGS = True\nTAG = 'PDF자동생성_계단실'\nPX_W = 840.0\n# ────────────────────────\n\nDATA = json.loads(r'''{\"stair\":{\"a\":[264.5509948730469,513.85498046875],\"u\":[0.9755607592287645,0.21972984561273537],\"n\":[0.21972984561273537,-0.9755607592287645],\"t_east\":76.41261925027248,\"t_west\":-0.045227308317507445,\"off\":-0.002276454150349863,\"width\":73.6,\"tread\":8.495316284287776},\"rooms\":{\"1\":[[\"화장실(남)\",290.5,346.4],[\"화장실(여)\",340.8,264.6],[\"카페\",331.1,624.0],[\"서점\",562.4,473.2],[\"HALL\",425.4,515.6],[\"계단실\",249.87,510.55]],\"2\":[[\"화장실(남)\",290.5,346.4],[\"화장실(여)\",340.8,264.6],[\"카페\",434.6,542.8],[\"독서실\",482.1,391.8],[\"계단실\",249.87,510.55]],\"3\":[[\"화장실(남)\",290.5,346.4],[\"화장실(여)\",340.8,264.6],[\"식당\",491.6,378.4],[\"뷔페\",489.4,582.9],[\"계단실\",249.87,510.55]],\"4\":[[\"화장실(남)\",290.5,346.4],[\"화장실(여)\",340.8,264.6],[\"PC방\",478.3,480.7],[\"계단실\",249.87,510.55]],\"5\":[[\"화장실(남)\",290.5,346.4],[\"화장실(여)\",340.8,264.6],[\"바버샵\",524.1,375.0],[\"계단실\",249.87,510.55]],\"6\":[[\"화장실(남)\",290.5,346.4],[\"화장실(여)\",340.8,264.6],[\"계단실\",249.87,510.55]],\"7\":[[\"계단실\",249.87,510.55]]}}''')\ndoc = DocumentManager.Instance.CurrentDBDocument\nMM = 1.0 / 304.8\nlog = []\n\n\ndef ename(e):\n    try:\n        return e.Name\n    except Exception:\n        return Element.Name.__get__(e)\n\n\nclass WarnSwallower(IFailuresPreprocessor):\n    __namespace__ = 'PDFStairsRooms'\n\n    def PreprocessFailures(self, fa):\n        for f in fa.GetFailureMessages():\n            if f.GetSeverity() == FailureSeverity.Warning:\n                fa.DeleteWarning(f)\n        return FailureProcessingResult.Continue\n\n\ndef tx(name):\n    t = Transaction(doc, name)\n    t.Start()\n    o = t.GetFailureHandlingOptions()\n    o.SetFailuresPreprocessor(WarnSwallower())\n    t.SetFailureHandlingOptions(o)\n    return t\n\n\ndef tagged(cat):\n    out = []\n    for e in FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType().ToElements():\n        p = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)\n        if p is not None and p.AsString() == TAG:\n            out.append(e.Id)\n    return out\n\n\ndef set_tag(e):\n    p = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)\n    if p is not None and not p.IsReadOnly:\n        p.Set(TAG)\n\n\nlevels = sorted(FilteredElementCollector(doc).OfClass(Level).ToElements(), key=lambda l: l.Elevation)\nlv_by_name = dict((ename(l), l) for l in levels)\nimages = {}\nfor img in FilteredElementCollector(doc).OfClass(ImageInstance).ToElements():\n    images[ename(doc.GetElement(img.GetTypeId())).strip().lower()] = img\n\n\ndef frame(fl):\n    img = images.get('%s.pdf' % fl)\n    lvl = lv_by_name.get(FLOOR_LEVEL[fl])\n    if img is None or lvl is None:\n        return None\n    c = img.GetLocation(BoxPlacement.Center)\n    k = img.Width / PX_W\n    left, top = c.X - img.Width / 2.0, c.Y + img.Height / 2.0\n    idx = levels.index(lvl)\n    nxt = levels[idx + 1] if idx + 1 < len(levels) else None\n    return {'k': k, 'left': left, 'top': top, 'lvl': lvl, 'nxt': nxt}\n\n\ndef XY(F, x, y, z):\n    return XYZ(F['left'] + x * F['k'], F['top'] - y * F['k'], z)\n\n\n# ── 0. 이전 결과 삭제 (Dynamo 트랜잭션 사용) ──\nTransactionManager.Instance.EnsureInTransaction(doc)\nn_st = n_rm = 0\nif RUN_STAIRS:\n    for cat in (BuiltInCategory.OST_StairsRailing, BuiltInCategory.OST_Stairs):\n        for i in tagged(cat):\n            try:\n                doc.Delete(i); n_st += cat == BuiltInCategory.OST_Stairs\n            except Exception:\n                pass\nif RUN_ROOMS:\n    for i in tagged(BuiltInCategory.OST_Rooms):\n        try:\n            doc.Delete(i); n_rm += 1\n        except Exception:\n            pass\nif n_st or n_rm:\n    log.append('이전 자동생성 계단 %d개, 실 %d개 삭제' % (n_st, n_rm))\n\n# ── 1. 실 ──\nif RUN_ROOMS:\n    made = 0\n    for fl, rooms in sorted(DATA['rooms'].items()):\n        F = frame(fl)\n        if F is None:\n            continue\n        for name, x, y in rooms:\n            try:\n                p = XY(F, x, y, 0)\n                rm = doc.Create.NewRoom(F['lvl'], UV(p.X, p.Y))\n                rm.get_Parameter(BuiltInParameter.ROOM_NAME).Set(name)\n                if F['nxt'] is not None:\n                    rm.UpperLimit = F['nxt']\n                    rm.LimitOffset = 0.0\n                set_tag(rm)\n                made += 1\n            except Exception as ex:\n                log.append('%s층 실(%s) 실패: %s' % (fl, name, ex))\n    log.append('실 %d개 생성' % made)\n\n# 여기까지(삭제 + 실)를 확정하고, 계단은 별도 트랜잭션으로 처리\nTransactionManager.Instance.ForceCloseTransaction()\n\n# ── 2. 계단 ──\nif RUN_STAIRS:\n    S = DATA['stair']\n    ax, ay = S['a']; ux, uy = S['u']; nx, ny = S['n']\n\n    def SP(t_, o_):   # 계단 축(t) / 북쪽 오프셋(o) → PDF 좌표\n        return (ax + ux * t_ + nx * o_, ay + uy * t_ + ny * o_)\n\n    rail_type = None\n    if ADD_RAILINGS:\n        rts = FilteredElementCollector(doc).OfClass(RailingType).ToElements()\n        rail_type = rts[0] if rts else None\n\n    made = 0\n    for fl in STAIR_FLOORS:\n        F = frame(fl)\n        if F is None or F['nxt'] is None:\n            log.append('%s층 계단: 레벨/PDF 없음' % fl); continue\n        scope = None; t = None\n        try:\n            H = (F['nxt'].Elevation - F['lvl'].Elevation) / MM\n            R = 2 * int(round(H / 2.0 / MAX_RISER_MM))\n            per = R // 2\n            run_pt = S['t_east'] - S['t_west']                 # 도면상 계단 길이 (pt)\n            tread_mm = run_pt * F['k'] / MM / (per - 1)\n            half_w_pt = S['width'] / 2.0\n            run_w_mm = half_w_pt * F['k'] / MM - RUN_GAP_MM\n            q = half_w_pt / 2.0                                  # 각 계단 중심선 오프셋\n            z0 = F['lvl'].Elevation                              # 계단 경로는 실제 레벨 높이에 둠\n            scope = StairsEditScope(doc, 'PDF 계단 %s층' % fl)\n            sid = scope.Start(F['lvl'].Id, F['nxt'].Id)\n            t = tx('PDF 계단 %s층' % fl)\n            st = doc.GetElement(sid)\n            try:\n                st.DesiredRisersNumber = R\n            except Exception:\n                pass\n            try:\n                st.ActualTreadDepth = tread_mm * MM\n            except Exception:\n                pass\n            # 1단: 북쪽 절반, 동쪽 끝(UP)에서 서쪽으로\n            x1, y1 = SP(S['t_east'], q); x2, y2 = SP(S['t_west'], q)\n            r1 = StairsRun.CreateStraightRun(doc, sid, Line.CreateBound(XY(F, x1, y1, z0), XY(F, x2, y2, z0)), StairsRunJustification.Center)\n            r1.ActualRunWidth = run_w_mm * MM\n            # 2단: 남쪽 절반, 서쪽에서 동쪽으로\n            z1 = r1.TopElevation if r1.TopElevation > z0 + 1e-6 else z0 + r1.TopElevation   # 상대/절대 높이 모두 대응\n            x3, y3 = SP(S['t_west'], -q); x4, y4 = SP(S['t_east'], -q)\n            r2 = StairsRun.CreateStraightRun(doc, sid, Line.CreateBound(XY(F, x3, y3, z1), XY(F, x4, y4, z1)), StairsRunJustification.Center)\n            r2.ActualRunWidth = run_w_mm * MM\n            try:\n                StairsLanding.CreateAutomaticLanding(doc, r1.Id, r2.Id)\n            except Exception as ex:\n                log.append('%s층 계단참 자동생성 실패: %s' % (fl, ex))\n            set_tag(st)\n            t.Commit()\n            scope.Commit(WarnSwallower())\n            t = None; scope = None\n            # 난간은 Revit이 계단 생성 시 자동으로 붙임 → 태그만 달아 둠 (재실행 시 함께 삭제)\n            t = tx('PDF 난간 태그 %s층' % fl)\n            try:\n                st = doc.GetElement(sid)\n                rids = list(st.GetAssociatedRailings())\n                for rid in rids:\n                    set_tag(doc.GetElement(rid))\n                if not rids and rail_type is not None:\n                    for rid in Railing.Create(doc, sid, rail_type.Id, RailingPlacementPosition.Treads):\n                        set_tag(doc.GetElement(rid))\n            except Exception as ex:\n                log.append('%s층 난간 처리 실패: %s' % (fl, str(ex).splitlines()[0]))\n            t.Commit(); t = None\n            made += 1\n            log.append('%s층 계단: 챌면 %d개(%.0fmm), 디딤판 %.0fmm, 폭 %.0fmm' % (fl, R, H / R, tread_mm, run_w_mm))\n        except Exception as ex:\n            import traceback\n            log.append('%s층 계단 실패: %s' % (fl, str(ex).splitlines()[0]))\n            try:\n                if t is not None and t.GetStatus() == TransactionStatus.Started:\n                    t.RollBack()\n            except Exception:\n                pass\n            try:\n                if scope is not None and scope.IsActive:\n                    scope.Cancel()\n            except Exception:\n                pass\n    log.insert(0, '계단 %d개 생성' % made)\n\nOUT = log\n",
+   "Engine": "PythonNet3",
+   "VariableInputPorts": true,
+   "Id": "7e69f8d0fc174fb78ac68aa5db85f882",
+   "NodeType": "PythonScriptNode",
+   "Inputs": [],
+   "Outputs": [
+    {
+     "Id": "6cc3e072d6a646669e936f1a436a7bc3",
+     "Name": "OUT",
+     "Description": "Result of the python script",
+     "UsingDefaultValue": false,
+     "Level": 2,
+     "UseLevels": false,
+     "KeepListStructure": false
+    }
+   ],
+   "Replication": "Disabled",
+   "Description": "Runs an embedded Python script."
+  }
+ ],
+ "Connectors": [],
+ "Dependencies": [],
+ "NodeLibraryDependencies": [],
+ "Bindings": [],
+ "View": {
+  "Dynamo": {
+   "ScaleFactor": 1.0,
+   "HasRunWithoutCrash": true,
+   "IsVisibleInDynamoLibrary": true,
+   "Version": "3.0.0.0",
+   "RunType": "Manual",
+   "RunPeriod": "1000"
+  },
+  "Camera": {
+   "Name": "Background Preview",
+   "EyeX": -17.0,
+   "EyeY": 24.0,
+   "EyeZ": 50.0,
+   "LookX": 12.0,
+   "LookY": -13.0,
+   "LookZ": -58.0,
+   "UpX": 0.0,
+   "UpY": 1.0,
+   "UpZ": 0.0
+  },
+  "ConnectorPins": [],
+  "NodeViews": [
+   {
+    "Id": "7e69f8d0fc174fb78ac68aa5db85f882",
+    "Name": "PDF 계단 + 실 생성",
+    "IsSetAsInput": false,
+    "IsSetAsOutput": false,
+    "Excluded": false,
+    "ShowGeometry": true,
+    "X": 200.0,
+    "Y": 200.0
+   }
+  ],
+  "Annotations": [],
+  "X": 0.0,
+  "Y": 0.0,
+  "Zoom": 1.0
+ }
+}

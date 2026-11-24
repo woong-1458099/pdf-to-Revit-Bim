@@ -20,7 +20,7 @@ from System import Environment
 import System.IO
 
 # ───────── 설정 ─────────
-AUTHOR = '작성자 이름'                 # 표제란 작성자
+AUTHOR = '최연웅'                 # 표제란 작성자
 OUT_DIR = os.path.join(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), 'BIM포트폴리오')   # 결과 저장 폴더
 PLAN_LEVELS = [('1F', '1층 평면도'), ('2F', '2층 평면도'), ('3F', '3층 평면도'), ('4F', '4층 평면도'),
                ('5F', '5층 평면도'), ('6F', '6층 평면도'), ('옥상', '옥상 평면도')]
@@ -120,9 +120,10 @@ def dup(view, name):
     return v
 
 
-# 도면틀 (A3 우선)
+# 도면틀: TB_SIZE(A1) 우선, 없으면 첫 번째 도면틀
+TB_SIZE = 'A1'
 tbs = list(FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsElementType().ToElements())
-tb = next((t for t in tbs if 'A3' in ename(t) or 'A3' in (t.FamilyName or '')), tbs[0] if tbs else None)
+tb = next((t for t in tbs if TB_SIZE in ename(t) or TB_SIZE in (t.FamilyName or '')), tbs[0] if tbs else None)
 TB_ID = tb.Id if tb else ElementId.InvalidElementId
 log.append('도면틀: %s' % (('%s : %s' % (tb.FamilyName, ename(tb))) if tb else '없음(빈 시트)'))
 

@@ -1,5 +1,8 @@
 # PDF 평면도 → Revit BIM 자동 모델링
 
+> 건축공학 전공자가 **대학 기초설계 과제로 직접 설계한 도면**을 BIM으로 옮긴 1인 프로젝트 · 2026.11.17 ~ 11.20 (4일)
+> 포트폴리오: [docs/portfolio.pdf](docs/portfolio.pdf)
+
 지상 6층 + 옥상 근린생활시설의 **벡터 PDF 평면도 7장**을 읽어 Revit 모델, 도면 시트, IFC까지 만든 프로젝트입니다.
 Python(PyMuPDF)으로 PDF의 선 정보를 추출하고, Dynamo(PythonNet3) 스크립트로 Revit API를 호출해 요소를 자동 생성했습니다.
 스크립트 작성과 검증에는 생성형 AI(Claude)와 Revit MCP 커넥터를 함께 활용했습니다.
@@ -10,7 +13,7 @@ Python(PyMuPDF)으로 PDF의 선 정보를 추출하고, Dynamo(PythonNet3) 스�
 
 | 항목 | 수량 |
 |---|---|
-| 벽 (200 / 300mm) | 198 |
+| 벽 | 198 (이 중 30개는 벽 접합부 조각 — [물량 검토](#5-물량표-검토로-찾은-문제) 참고) |
 | 커튼월 / 유리 패널 | 28 / 146 |
 | 바닥 | 7 |
 | 문 / 창 | 27 / 46 |
@@ -42,9 +45,12 @@ PDF 선의 **두께**로 요소 종류를 나눴습니다.
 | 1.079pt | 계단 디딤판·승강기 |
 | 0.12pt | 글자 외곽 (실 이름) |
 
-- `walls2.py` 평행한 이중선 쌍(간격 3~10pt)을 벽 중심선과 두께로 변환하고, 벽 사이 빈틈을 문 호(arc) 유무로 문/창/개구부로 판별
-- `floors2.py` 벽 띠를 합쳐 층별 바닥 외곽 폴리곤 생성
-- `cw.py`, `cw2.py` 벽에 속하지 않는 가는 선을 커튼월 직선·곡선 경로로 정리
+| 순서 | 스크립트 | 내용 |
+|---|---|---|
+| 1 | `extract_walls.py` | 평행한 이중선 쌍(간격 3~10pt)을 벽 중심선과 두께로 변환하고, 벽 사이 빈틈을 문 호(arc) 유무로 문/창/개구부로 판별. 길이가 두께보다 짧은 접합부 조각은 `jambs`로 분리 |
+| 2 | `extract_floors.py` | 벽 띠를 합쳐 층별 바닥 외곽 폴리곤 생성 |
+| 3 | `extract_cw_candidates.py` | 벽에 속하지 않는 가는 선에서 커튼월(유리면) 후보 추출 |
+| 4 | `extract_cw_paths.py` | 후보를 병합해 커튼월 직선·곡선 경로로 정리 |
 
 ### 2. Revit 모델 생성 (`dynamo/`, Dynamo에서 순서대로 실행)
 | 순서 | 스크립트 | 내용 |
@@ -89,13 +95,26 @@ Revit **파일 → 내보내기 → IFC**에서 아래처럼 설정했습니다.
 
 ![IFC 속성](docs/images/08_IFC_뷰어_속성.jpg)
 
+### 5. 물량표 검토로 찾은 문제
+IFC에서 벽 물량을 다시 집계하다가 **두께 260·300mm 벽 20개가 모두 길이 약 200mm**인 것을 발견했습니다.
+원본 PDF와 겹쳐 보니, 벽이 만나거나 유리벽·커튼월이 붙는 자리에 그려진 **벽 끝 돌출부**를 짧고 두꺼운 벽으로 읽은 것이었습니다.
+같은 조건(길이 < 두께)으로 찾으면 200mm 두께까지 포함해 모두 30개입니다.
+
+- 형상(위치·면적)은 원본과 맞지만, 벽 **개수와 두께 유형**이 물량표에서 왜곡됩니다.
+- `extract_walls.py`에 `split_jambs()`를 추가해 이런 조각을 일반 벽과 분리하도록 고쳤습니다 (일반 벽 169 + 조각 30).
+- 현재 Revit 모델·도면·IFC는 수정 전 데이터로 만든 것이라 **198개(조각 포함)로 남아 있습니다.** Revit 체험판이 끝나 재생성은 하지 못했습니다.
+
+![접합부 조각](docs/images/09_접합부_조각벽.jpg)
+
 ## 실행 방법
 
 1. Revit에서 층별 평면뷰(1F~옥상)에 PDF를 가져오기 → 축척 1:100, 같은 원점으로 정렬
 2. (선택) PC에서 추출 다시 하기
    ```bash
-   pip install pymupdf shapely
-   mkdir out && PDF_DIR=pdf python extract/walls2.py && python extract/floors2.py
+   pip install -r requirements.txt
+   cd extract && mkdir out
+   PDF_DIR=../pdf python extract_walls.py && python extract_floors.py
+   PDF_DIR=../pdf python extract_cw_candidates.py && python extract_cw_paths.py
    ```
 3. Dynamo에서 `dynamo/01` → `06` 순서로 `.dyn`을 열어 실행 (Python 엔진: PythonNet3)
 4. 결과물은 바탕 화면 `BIM포트폴리오` 폴더에 저장
@@ -109,6 +128,7 @@ Revit 2027 · Dynamo (PythonNet3) · Python 3 (PyMuPDF, Shapely) · RevitClaudeC
 - 폭 300mm 미만의 작은 창 개구부 17곳은 의도적으로 생략했습니다.
 - 계단을 가로지르는 실 구분선은 Revit이 무시하므로, 계단 옆을 돌아가는 L자 선으로 실을 나눴습니다.
 - `05` 스크립트의 시트 작성자 입력, 언더레이 끄기, 단면 표식 숨김은 실행 환경에서 적용되지 않아 **MCP 커넥터로 후보정**했습니다.
+- 벽 접합부 조각 30개가 벽으로 모델링되어 있습니다. 추출 코드는 수정했지만 모델에는 반영하지 못했습니다 (위 5번 참고).
 - 원본 평면도는 대학 기초설계 과목에서 직접 설계한 도면이며, PDF 파일은 저장소에 포함하지 않았습니다.
 
 ## 폴더 구조
@@ -116,4 +136,6 @@ Revit 2027 · Dynamo (PythonNet3) · Python 3 (PyMuPDF, Shapely) · RevitClaudeC
 extract/   PDF → JSON 추출 (PyMuPDF)
 dynamo/    Revit 생성·출력 스크립트 (.dyn + 같은 내용의 .py)
 docs/images/  확인용 이미지, 도면, IFC 뷰어 캡처
+docs/portfolio.pdf  포트폴리오
+requirements.txt    Python 패키지 목록
 ```

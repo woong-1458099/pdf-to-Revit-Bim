@@ -1,0 +1,12 @@
+# 원본 도면과 중간 산출물은 올리지 않음
+pdf/
+out/
+*.pdf
+*.rvt
+*.rfa
+*.0*.rvt
+backup/
+__pycache__/
+
+# 포트폴리오 PDF는 올림
+!docs/portfolio.pdf

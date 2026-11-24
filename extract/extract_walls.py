@@ -2,12 +2,14 @@
 """
 [1단계] 벽·창·문 추출  (PC에서 실행, Revit 불필요)
 - 입력 : pdf/1.pdf ~ pdf/7.pdf  (1층 ~ 옥상 벡터 평면도)
-- 출력 : out/walls2.json  (층별 벽 중심선·두께, 원호 벽, 창/문 개구부)
+- 출력 : out/walls.json  (층별 벽 중심선·두께, 원호 벽, 창/문 개구부)
 - 원리 : PDF 선 두께로 요소를 구분
          1.438pt = 벽 이중선, 0.24pt = 창·문·유리, 1.079pt = 계단·승강기, 0.12pt = 글자 외곽
          평행한 이중선 쌍(간격 3~10pt)을 찾아 벽 중심선과 두께로 바꾸고,
          벽 사이의 빈틈은 문 호(arc) 유무로 문/창/개구부를 판단
-- 실행 : PDF_DIR=pdf python walls2.py
+- 접합부 조각 : 길이가 두께보다 짧은 '벽'은 벽 끝 돌출부(유리벽·커튼월이 붙는 자리의 약 200mm 조각)이므로
+               walls 와 분리해 jambs 로 따로 내보냄 (물량표에서 벽 개수·두께 유형이 왜곡되지 않게)
+- 실행 : PDF_DIR=pdf python extract_walls.py
 """
 import os
 import pymupdf as fitz, math, json, sys
@@ -443,6 +445,16 @@ def end_doors(W, loose):
     return out
 
 
+def split_jambs(W):
+    """길이 < 두께 인 조각을 일반 벽과 분리.
+    PDF에서 벽이 유리벽·커튼월과 만나는 자리에 그려진 작은 돌출부(약 200 x 200~300mm)가
+    짧고 두꺼운 '벽'으로 읽히는 문제(물량표에 260·300mm 벽으로 잡힘)를 막는다."""
+    walls, jambs = [], []
+    for w in W:
+        (jambs if math.dist(w['a'], w['b']) < w['t'] else walls).append(w)
+    return walls, jambs
+
+
 def process(path):
     p = fitz.open(path)[0]
     thick = [(a, b) for a, b, w in get_lines(p, {WALL_W})]
@@ -456,18 +468,20 @@ def process(path):
     W = [w for w in W if math.dist(w['a'], w['b']) > 1.5]
     loose = [d for d in darcs if not d.get('used')]
     doors += end_doors(W, loose)
-    return W, ops, p.rect, arcs, doors, [d for d in darcs if not d.get('used')]
+    W, jambs = split_jambs(W)
+    return W, jambs, ops, p.rect, arcs, doors, [d for d in darcs if not d.get('used')]
 
 
 if __name__ == '__main__':
     out = {}
     for k, f in enumerate(files):
-        W, ops, r, arcs, doors, loose = process(base+f)
+        W, J, ops, r, arcs, doors, loose = process(base+f)
         out[str(k+1)] = {'walls': [[round(w['a'][0], 3), round(w['a'][1], 3), round(w['b'][0], 3), round(w['b'][1], 3), round(w['t'], 3)] for w in W],
+                         'jambs': [[round(w['a'][0], 3), round(w['a'][1], 3), round(w['b'][0], 3), round(w['b'][1], 3), round(w['t'], 3)] for w in J],
                          'openings': [[round(o['a'][0], 2), round(o['a'][1], 2), round(o['b'][0], 2), round(o['b'][1], 2)] for o in ops],
                          'arcs': [[round(v, 3) for v in (*a['a'], *a['m'], *a['b'], a['t'])] for a in arcs],
                          'doors': [[round(d['a'][0], 3), round(d['a'][1], 3), round(d['b'][0], 3), round(d['b'][1], 3), round(d['t'], 3), round(d['n'][0], 4), round(d['n'][1], 4), d['leaves'], d['hinge'] or ''] for d in doors],
                          'loose_doors': [[round(d['c'][0], 2), round(d['c'][1], 2), round(d['r'], 2)] for d in loose],
                          'page': [r.width, r.height]}
-        print(k+1, 'walls', len(W), 'arcs', len(arcs), 'windows', len(ops), 'doors', len(doors), [d['leaves'] for d in doors], 'loose arcs', len(loose))
-    json.dump(out, open('out/walls2.json', 'w'))
+        print(k+1, 'walls', len(W), 'jambs', len(J), 'arcs', len(arcs), 'windows', len(ops), 'doors', len(doors), [d['leaves'] for d in doors], 'loose arcs', len(loose))
+    json.dump(out, open('out/walls.json', 'w'))

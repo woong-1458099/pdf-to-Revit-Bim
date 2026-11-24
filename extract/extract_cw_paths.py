@@ -7,7 +7,7 @@
 """
 import os
 import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import walls2 as W, json, math
+import extract_walls as W, json, math
 K = json.load(open('out/cw_keep.json'))
 ANG = math.radians(1.5)
 

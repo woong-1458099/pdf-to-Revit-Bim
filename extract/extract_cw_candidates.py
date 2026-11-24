@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 [3단계-a] 커튼월(유리면) 후보 추출
-- 입력 : pdf/*.pdf, out/walls2.json
+- 입력 : pdf/*.pdf, out/walls.json
 - 출력 : out/cw.json, out/cw_keep.json  (유리면 후보 선과 채택 목록)
 - 원리 : 0.24pt 가는 선 중 벽 개구부에 속하지 않는 긴 직선/곡선을 유리면 후보로 분류
 """
 import os
 import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import walls2 as W, json, math
+import extract_walls as W, json, math
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import unary_union
 c = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dynamo', '01_모델생성_벽바닥창문.py'), encoding='utf-8').read()

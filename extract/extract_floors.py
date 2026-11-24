@@ -1,24 +1,24 @@
 # -*- coding: utf-8 -*-
 """
 [2단계] 바닥 외곽 추출
-- 입력 : out/walls2.json
-- 출력 : out/floors2.json  (층별 바닥 외곽 폴리곤 + 구멍)
+- 입력 : out/walls.json
+- 출력 : out/floors.json  (층별 바닥 외곽 폴리곤 + 구멍)
 - 원리 : 벽 띠(중심선을 두께만큼 buffer)를 합쳐 건물 외곽 폴리곤을 만들고 단순화
-- 실행 : python floors2.py [단순화 허용오차 pt, 기본 0.1]
+- 실행 : python extract_floors.py [단순화 허용오차 pt, 기본 0.1]
 """
 import os
 import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import walls2 as W, math, json
+import extract_walls as W, math, json
 from shapely.geometry import LineString, Polygon, MultiPolygon
 from shapely.ops import unary_union
-D = json.load(open('out/walls2.json'))
+D = json.load(open('out/walls.json'))
 out = {}
 CL = float(sys.argv[1]) if len(sys.argv) > 1 else 0.1
 for k, f in enumerate(W.files):
     fl = str(k+1)
     p = W.fitz.open(W.base+f)[0]
     geoms = []
-    for x1, y1, x2, y2, t in D[fl]['walls']:
+    for x1, y1, x2, y2, t in D[fl]['walls'] + D[fl].get('jambs', []):   # 바닥 외곽에는 돌출부도 포함
         geoms.append(LineString([(x1, y1), (x2, y2)]).buffer(t/2, cap_style=2, join_style=2))
     for a in D[fl]['arcs']:
         geoms.append(LineString([(a[0], a[1]), (a[2], a[3]), (a[4], a[5])]).buffer(a[6]/2))
@@ -68,4 +68,4 @@ for k, f in enumerate(W.files):
     out[fl] = {'shell': [list(map(lambda v: round(v, 3), c)) for c in list(shell.exterior.coords)[:-1]],
                'holes': [[list(map(lambda v: round(v, 3), c)) for c in list(h.exterior.coords)[:-1]] for h in holes]}
     print(fl, 'shell pts', len(out[fl]['shell']), 'area m2', round(shell.area*(29669/840/1000)**2, 1), 'holes', [round(h.area*(29669/840/1000)**2, 1) for h in holes])
-json.dump(out, open('out/floors2.json', 'w'))
+json.dump(out, open('out/floors.json', 'w'))
